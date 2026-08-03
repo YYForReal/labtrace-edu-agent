@@ -8,8 +8,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -17,7 +17,7 @@ jobs:
       - run: python -m unittest discover -s goaihz/tests -p 'test_*.py' -v
       - run: python goaihz/scripts/validate_package.py
       - run: python -m black --check app agent_skills goaihz
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
