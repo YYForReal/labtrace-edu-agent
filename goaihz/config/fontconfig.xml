@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir prefix="cwd">goaihz/assets/fonts</dir>
+  <dir prefix="cwd">assets/fonts</dir>
+  <dir>/app/goaihz/assets/fonts</dir>
+  <cachedir>/private/tmp/labtrace-font-cache</cachedir>
+  <config>
+    <rescan>
+      <int>0</int>
+    </rescan>
+  </config>
+</fontconfig>

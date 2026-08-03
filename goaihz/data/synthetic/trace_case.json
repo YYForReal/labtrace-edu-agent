@@ -1,0 +1,65 @@
+{
+  "trace_id": "trace-demo-001",
+  "rubric_id": "general_lab_report_v1",
+  "submission_alias": "demo-student-001",
+  "evidence": [
+    {
+      "evidence_id": "ev-001",
+      "kind": "paragraph",
+      "source_file": "synthetic-report.docx",
+      "locator": "paragraph:8",
+      "excerpt": "本实验比较两种参数设置对结果稳定性的影响。",
+      "reliability": 0.98,
+      "verification": "parser_observed"
+    },
+    {
+      "evidence_id": "ev-002",
+      "kind": "table",
+      "source_file": "synthetic-report.docx",
+      "locator": "table:2",
+      "excerpt": "三次重复实验的结果数据表。",
+      "reliability": 0.95,
+      "verification": "parser_observed"
+    },
+    {
+      "evidence_id": "ev-003",
+      "kind": "chart",
+      "source_file": "synthetic-report.docx",
+      "locator": "image:4",
+      "excerpt": "结果曲线有坐标轴，但缺少误差线。",
+      "reliability": 0.82,
+      "verification": "vision_observed"
+    }
+  ],
+  "criteria": [
+    {
+      "criterion_id": "objective_and_principle",
+      "criterion_name": "实验目标与原理",
+      "max_score": 15,
+      "score": 13,
+      "reason": "第8段明确给出比较目标，但理论原理解释略简。",
+      "evidence_ids": ["ev-001"],
+      "confidence": 0.91
+    },
+    {
+      "criterion_id": "data_and_evidence",
+      "criterion_name": "数据、结果与证据",
+      "max_score": 25,
+      "score": 20,
+      "reason": "表2提供三次重复数据，图4展示趋势，但图表标注仍不完整。",
+      "evidence_ids": ["ev-002", "ev-003"],
+      "confidence": 0.84
+    }
+  ],
+  "model_total_score": 33,
+  "needs_human_review": true,
+  "review_reasons": [
+    "图4缺少误差线，需教师判断该课程是否要求统计不确定性表达。"
+  ],
+  "review": {
+    "status": "pending",
+    "reviewer_role": "teacher",
+    "final_score": null,
+    "note": ""
+  }
+}

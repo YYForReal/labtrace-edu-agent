@@ -1,0 +1,24 @@
+services:
+  labtrace:
+    build:
+      context: .
+      dockerfile: goaihz/Dockerfile.production
+    image: labtrace-edu-agent:local
+    container_name: labtrace-edu-agent
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${PORT:-11315}:11315"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "11315"
+      RUBRICS_DIR: /app/goaihz/config/rubrics
+      LABTRACE_RUNTIME_DIR: /app/goaihz/runtime/demo_tasks
+    volumes:
+      - ./goaihz/runtime/demo_tasks:/app/goaihz/runtime/demo_tasks
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

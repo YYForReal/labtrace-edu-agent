@@ -1,0 +1,38 @@
+[
+  {
+    "submission_alias": "demo-student-001",
+    "review_status": "approved",
+    "criterion_scores": [
+      {"criterion_id": "objective_and_principle", "criterion_name": "实验目标与原理", "max_score": 15, "score": 13},
+      {"criterion_id": "method_and_process", "criterion_name": "实验方法与过程", "max_score": 20, "score": 16},
+      {"criterion_id": "data_and_evidence", "criterion_name": "数据、结果与证据", "max_score": 25, "score": 20},
+      {"criterion_id": "analysis_and_validation", "criterion_name": "分析、验证与误差讨论", "max_score": 20, "score": 10},
+      {"criterion_id": "conclusion_and_reflection", "criterion_name": "结论与反思", "max_score": 15, "score": 11},
+      {"criterion_id": "report_quality", "criterion_name": "报告规范与学术表达", "max_score": 5, "score": 4}
+    ]
+  },
+  {
+    "submission_alias": "demo-student-002",
+    "review_status": "adjusted",
+    "criterion_scores": [
+      {"criterion_id": "objective_and_principle", "criterion_name": "实验目标与原理", "max_score": 15, "score": 12},
+      {"criterion_id": "method_and_process", "criterion_name": "实验方法与过程", "max_score": 20, "score": 14},
+      {"criterion_id": "data_and_evidence", "criterion_name": "数据、结果与证据", "max_score": 25, "score": 18},
+      {"criterion_id": "analysis_and_validation", "criterion_name": "分析、验证与误差讨论", "max_score": 20, "score": 9},
+      {"criterion_id": "conclusion_and_reflection", "criterion_name": "结论与反思", "max_score": 15, "score": 9},
+      {"criterion_id": "report_quality", "criterion_name": "报告规范与学术表达", "max_score": 5, "score": 4}
+    ]
+  },
+  {
+    "submission_alias": "demo-student-003",
+    "review_status": "approved",
+    "criterion_scores": [
+      {"criterion_id": "objective_and_principle", "criterion_name": "实验目标与原理", "max_score": 15, "score": 14},
+      {"criterion_id": "method_and_process", "criterion_name": "实验方法与过程", "max_score": 20, "score": 18},
+      {"criterion_id": "data_and_evidence", "criterion_name": "数据、结果与证据", "max_score": 25, "score": 22},
+      {"criterion_id": "analysis_and_validation", "criterion_name": "分析、验证与误差讨论", "max_score": 20, "score": 13},
+      {"criterion_id": "conclusion_and_reflection", "criterion_name": "结论与反思", "max_score": 15, "score": 12},
+      {"criterion_id": "report_quality", "criterion_name": "报告规范与学术表达", "max_score": 5, "score": 5}
+    ]
+  }
+]

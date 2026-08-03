@@ -1,0 +1,13 @@
+格物智评 LabTrace
+Copyright 2026 Youyi Huang
+
+This product includes open-source runtime dependencies distributed under
+their respective licenses. No source-available document-skill code is
+vendored in this repository.
+
+This distribution bundles FandolHei Regular and Bold, Fandol version 0.3,
+copyright the Fandol team (Clerk Ma and Jie Su), under GNU GPL with the font
+exception. The full license text is included at goaihz/assets/fonts/COPYING.
+
+The optional MiniMax or other commercial model service is accessed through
+configuration at runtime and is not part of this source distribution.

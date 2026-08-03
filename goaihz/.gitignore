@@ -1,0 +1,7 @@
+.env
+runtime/
+tmp/
+!data/synthetic/*.docx
+__pycache__/
+*.pyc
+/*.zip

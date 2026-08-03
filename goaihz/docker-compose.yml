@@ -1,0 +1,37 @@
+services:
+  app:
+    image: labtrace-goaihz:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: gamedev-ta-base:latest
+    container_name: labtrace-goaihz
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${PORT:-11315}:${PORT:-11315}"
+    env_file:
+      - .env
+    command: ["python", "-m", "goaihz.app"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: "${PORT:-11315}"
+      RUBRICS_DIR: /app/goaihz/config/rubrics
+      LABTRACE_RUNTIME_DIR: /app/_data/demo_tasks
+      UPLOAD_DIR: /app/_uploads
+      OUTPUT_DIR: /app/_outputs
+    volumes:
+      - ./:/app/goaihz:ro
+      - ./config/rubrics:/app/goaihz/config/rubrics:ro
+      - ./runtime/data:/app/_data
+      - ./runtime/uploads:/app/_uploads
+      - ./runtime/outputs:/app/_outputs
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${PORT:-11315}/health')" >/dev/null 2>&1 || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

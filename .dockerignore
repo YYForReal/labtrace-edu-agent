@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.venv
+venv
+**/__pycache__
+**/*.pyc
+frontend/node_modules
+goaihz/runtime
+goaihz/tmp
+goaihz/submission
+goaihz/*.zip
+*.log

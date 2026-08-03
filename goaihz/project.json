@@ -1,0 +1,67 @@
+{
+  "schema_version": "0.1.0",
+  "project_name": "格物智评 LabTrace",
+  "team_name_candidate": "独立变量",
+  "competition": "GOAI 2026",
+  "track": "Boundless Agents / 无界应用",
+  "topic": "AI+教育",
+  "repository": "https://github.com/YYForReal/labtrace-edu-agent",
+  "demo_url": "https://yywebsite.cn/education/",
+  "target_users": [
+    "高校实验课程教师",
+    "课程助教",
+    "需要复核批量实验报告的教研团队"
+  ],
+  "core_problem": "高校实验报告常以图文 Word 流转；通用 AI 把建议留在聊天框，教师仍要手工定位、批注、填分和写评语。",
+  "closed_loop": [
+    "导入实验要求并确认 rubric",
+    "解析报告正文、表格、图片、代码和原 Word 位置",
+    "按维度评分并建立证据引用",
+    "将低置信度或证据不足案例送入教师复核",
+    "回写 Word 原生批注、最终成绩和教师评语",
+    "聚合班级薄弱维度并生成讲评建议"
+  ],
+  "source_project": {
+    "name": "GameAssistant",
+    "repository": "https://github.com/YYForReal/GameAssistant",
+    "base_commit": "d8f3518",
+    "reused_scope": [
+      "FastAPI 与 Vue 3 应用骨架",
+      "Word/PDF 文档解析",
+      "多模态图片理解",
+      "rubric 驱动的 Agent 评分",
+      "Word 批注与 Excel 导出",
+      "批量任务和人工复核基础流程"
+    ]
+  },
+  "new_contributions": [
+    "高校实验报告的通用参赛产品闭环",
+    "评分证据链数据契约",
+    "教师终审与不可替代教育评价的边界设计",
+    "班级学情诊断基线",
+    "模拟数据、评测指标与合规验证",
+    "可复用的通用 rubric 与教师自定义 rubric JSON",
+    "MiniMax-M3 真实模型输出到 GradeTrace 的强契约适配",
+    "模型调用前自动脱敏、图片单任务授权和显式降级",
+    "图片证据到原 Word 段落定位与原生批注锚点",
+    "任意图文 Word 保真复制、标准批改页、最终成绩和教师评语回写",
+    "真实模型在线 Demo、无密钥离线基线、独立 API 与两分钟演示视频"
+  ],
+  "model_strategy": {
+    "production_model": "MiniMax-M3",
+    "protocol": "MiniMax Anthropic-compatible API",
+    "structured_contract": "Every response must map to GradeTrace and pass criterion, range, evidence-reference, and total-score validation",
+    "privacy_boundary": "Bounded de-identified text by default; up to four images only with per-task teacher opt-in",
+    "reproducible_profile": "Deterministic local baseline produces the same GradeTrace shape without a model key",
+    "fallback": "Timeout, quota, transport, or contract failure is visibly marked before deterministic fallback"
+  },
+  "human_decision_boundary": "AI 输出仅作为教师批改建议。成绩、评语、学情结论和对学生的正式反馈均由教师确认后生效。",
+  "data_policy": {
+    "public_submission": "Only public, synthetic, or authorized de-identified data",
+    "real_student_data": "Local processing by default; purpose limitation; access control; configurable retention and deletion",
+    "forbidden": "Unlicensed personal data, sensitive personal information, private course data, and undisclosed student work"
+  },
+  "current_stage": "preliminary",
+  "current_status": "Image-rich Word end-to-end demo implemented and verified: original image/paragraph mapping, MiniMax-M3 grading, GradeTrace validation, native Word comments, teacher score and feedback write-back, editable DOCX delivery, diagnosis, and deletion",
+  "license_status": "Standalone public repository licensed under Apache-2.0; synthetic demo data only; commercial model services are disclosed external dependencies"
+}

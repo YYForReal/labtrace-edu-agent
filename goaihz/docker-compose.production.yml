@@ -1,0 +1,48 @@
+services:
+  labtrace:
+    image: "${LABTRACE_IMAGE:-labtrace-edu-agent:latest}"
+    container_name: labtrace-goaihz
+    restart: unless-stopped
+    init: true
+    ports:
+      - "172.17.0.1:8792:11315"
+    env_file:
+      - /etc/labtrace/labtrace.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "11315"
+      RUBRICS_DIR: /app/goaihz/config/rubrics
+      LABTRACE_RUNTIME_DIR: /app/goaihz/runtime/demo_tasks
+      LABTRACE_TASK_TTL_SECONDS: "86400"
+      LABTRACE_GRADE_RATE_LIMIT: "8"
+      LABTRACE_GRADE_RATE_WINDOW_SECONDS: "600"
+      LABTRACE_GRADE_CONCURRENCY: "2"
+      LABTRACE_TRUST_PROXY_HEADERS: "true"
+      LABTRACE_LLM_ENABLED: "true"
+      LABTRACE_LLM_TIMEOUT_SECONDS: "90"
+      LABTRACE_LLM_MAX_ATTEMPTS: "3"
+      LABTRACE_LLM_MAX_TOKENS: "3200"
+      LABTRACE_LLM_ENABLE_THINKING: "false"
+      LABTRACE_LLM_DAILY_LIMIT: "100"
+    volumes:
+      - /var/lib/labtrace/demo_tasks:/app/goaihz/runtime/demo_tasks
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:11315/health', timeout=3)
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
