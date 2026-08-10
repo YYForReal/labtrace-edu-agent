@@ -130,7 +130,11 @@ class CompetitionProfileTests(unittest.TestCase):
                     "criterion_id": item["id"],
                     "score": item["max_score"] * 0.7,
                     "reason": "该维度有可定位证据，但仍需教师核对完成质量。",
-                    "evidence_ids": ["p-0001"],
+                    "evidence_ids": (
+                        ["p-0001", "p-0005"]
+                        if item["id"] == "report_quality"
+                        else ["p-0001"]
+                    ),
                     "confidence": 0.8,
                 }
             )
@@ -170,6 +174,12 @@ class CompetitionProfileTests(unittest.TestCase):
         self.assertTrue(run["structured_output_validated"])
         self.assertEqual(run["tokens"], {"input": 100, "output": 200})
         self.assertFalse(privacy["images_sent_to_text_model"])
+        report_quality_comment = next(
+            item
+            for item in demo_api._annotation_config(trace)["annotations"]
+            if item["criterion_id"] == "report_quality"
+        )
+        self.assertEqual(report_quality_comment["evidence_id"], "p-0005")
 
     def test_opt_in_image_maps_parser_index_to_existing_evidence_id(self):
         rubric = validate_rubric(

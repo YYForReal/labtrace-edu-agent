@@ -264,13 +264,21 @@ def _annotation_config(trace: GradeTrace, *, table_index: int = 1) -> dict[str, 
             ),
             None,
         )
+        paragraph_targets = [
+            evidence_by_id[evidence_id]
+            for evidence_id in decision.evidence_ids
+            if evidence_by_id[evidence_id].kind == "paragraph"
+        ]
         paragraph_target = next(
             (
-                evidence_by_id[evidence_id]
-                for evidence_id in decision.evidence_ids
-                if evidence_by_id[evidence_id].kind == "paragraph"
+                evidence
+                for evidence in paragraph_targets
+                if (
+                    (match := re.search(r"paragraph:(\d+)", evidence.locator))
+                    and int(match.group(1)) >= 5
+                )
             ),
-            None,
+            paragraph_targets[0] if paragraph_targets else None,
         )
         target = image_target or paragraph_target
         if not target or not target.excerpt:
@@ -353,13 +361,15 @@ def _annotation_config(trace: GradeTrace, *, table_index: int = 1) -> dict[str, 
     }
 
 
-def _word_comment_threads(trace: GradeTrace) -> list[dict[str, Any]]:
+def _word_comment_threads(
+    trace: GradeTrace, *, injected_annotation_ids: set[str] | None = None
+) -> list[dict[str, Any]]:
     status = (
         "teacher_confirmed"
         if trace.review.status in {"approved", "adjusted"}
         else "pending_review"
     )
-    return [
+    threads = [
         {
             key: value
             for key, value in annotation.items()
@@ -379,6 +389,11 @@ def _word_comment_threads(trace: GradeTrace) -> list[dict[str, Any]]:
         | {"status": status}
         for annotation in _annotation_config(trace).get("annotations", [])
     ]
+    if injected_annotation_ids is not None:
+        threads = [
+            item for item in threads if item["comment_id"] in injected_annotation_ids
+        ]
+    return threads
 
 
 def _try_build_annotated_report(
@@ -623,10 +638,15 @@ async def grade_demo_report(
     now = time.time()
     trace = outcome.trace
     evidence_appendix = _build_evidence_appendix(trace)
-    word_comments = _word_comment_threads(trace)
 
     output_path = task_dir / f"{input_path.stem}_批改演示.docx"
     delivery = _try_build_annotated_report(input_path, output_path, trace)
+    injected_annotation_ids = set(
+        (delivery.get("details") or {}).get("injected_annotation_ids") or []
+    )
+    word_comments = _word_comment_threads(
+        trace, injected_annotation_ids=injected_annotation_ids
+    )
     word_workflow = _word_workflow_summary(
         input_path=input_path,
         document_profile=parsed.get("document_profile", {}),
@@ -775,7 +795,6 @@ async def review_demo_result(request: ReviewRequest):
     state["status"] = "completed"
     state["trace"] = trace_payload(reviewed_trace)
     state["evidence_appendix"] = _build_evidence_appendix(reviewed_trace)
-    state["word_comments"] = _word_comment_threads(reviewed_trace)
     state["learning_feedback"] = build_learning_feedback(reviewed_trace)
     state["events"].append(
         {"stage": "review", "message": f"教师已确认，最终得分 {final_score:g}。"}
@@ -789,6 +808,12 @@ async def review_demo_result(request: ReviewRequest):
     )
     state["delivery"] = _try_build_annotated_report(
         input_path, output_path, reviewed_trace
+    )
+    injected_annotation_ids = set(
+        (state["delivery"].get("details") or {}).get("injected_annotation_ids") or []
+    )
+    state["word_comments"] = _word_comment_threads(
+        reviewed_trace, injected_annotation_ids=injected_annotation_ids
     )
     state["output_path"] = str(output_path) if output_path.exists() else ""
     state["word_workflow"] = _word_workflow_summary(

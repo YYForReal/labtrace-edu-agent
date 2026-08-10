@@ -272,6 +272,7 @@ def inject_annotations(
             injection_plan.append(
                 {
                     "comment_id": cid,
+                    "client_comment_id": ann.get("comment_id", ""),
                     "text": ann["text"],
                     "date": date_str,
                     "author": author,
@@ -973,6 +974,7 @@ def inject_all(input_path, output_path, config):
 
     results = {
         "annotations_count": 0,
+        "injected_annotation_ids": [],
         "image_annotations_count": 0,
         "annotation_start_index": None,
         "score_injected": False,
@@ -997,6 +999,11 @@ def inject_all(input_path, output_path, config):
             min_start_index=annotation_start_index,
         )
         results["annotations_count"] = len(injection_plan)
+        results["injected_annotation_ids"] = [
+            item["client_comment_id"]
+            for item in injection_plan
+            if item.get("client_comment_id")
+        ]
         results["image_annotations_count"] = sum(
             1 for item in injection_plan if item.get("evidence_kind") == "image"
         )
