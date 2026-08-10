@@ -116,6 +116,8 @@ export interface LabTraceTask {
     images_analyzed: number
     native_comments: number
     image_comments: number
+    evidence_references: number
+    evidence_appendix_written: boolean
     teacher_feedback_written: boolean
     score_written: boolean
     editable_word_available: boolean
@@ -137,6 +139,31 @@ export interface LabTraceTask {
       note: string
     }
   }
+  evidence_appendix: Array<{
+    reference_number: number
+    citation: string
+    evidence_id: string
+    kind: string
+    kind_label: string
+    locator: string
+    location_label: string
+    excerpt: string
+    reliability: number
+    verification: string
+    linked_criteria: string[]
+  }>
+  word_comments: Array<{
+    comment_id: string
+    criterion_id: string
+    criterion_name: string
+    evidence_id: string
+    evidence_ids: string[]
+    reference_numbers: number[]
+    location_label: string
+    text: string
+    evidence_kind: string
+    status: 'pending_review' | 'teacher_confirmed'
+  }>
   learning_feedback: {
     student_focus: Array<{
       criterion_id: string
@@ -213,5 +240,8 @@ export const reviewLabTraceDemo = (
 export const deleteLabTraceTask = (taskId: string) =>
   http.delete<{ task_id: string; status: string }>(labTraceApiUrl(`tasks/${taskId}`))
 
-export const labTraceDownloadUrl = (taskId: string, kind: 'report' | 'trace') =>
+export const getLabTraceTask = (taskId: string) =>
+  http.get<LabTraceTask>(labTraceApiUrl(`tasks/${encodeURIComponent(taskId)}`))
+
+export const labTraceDownloadUrl = (taskId: string, kind: 'source' | 'report' | 'trace') =>
   labTraceApiUrl(`tasks/${encodeURIComponent(taskId)}/download?kind=${kind}`)

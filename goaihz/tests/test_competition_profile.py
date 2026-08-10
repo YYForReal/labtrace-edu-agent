@@ -349,6 +349,7 @@ class CompetitionProfileTests(unittest.TestCase):
             self.assertTrue(details["score_injected"])
             self.assertTrue(details["comment_injected"])
             self.assertTrue(details["generic_section_appended"])
+            self.assertTrue(details["evidence_appendix_appended"])
 
             reviewed_document = Document(output_path)
             visible_text = "\n".join(
@@ -363,6 +364,8 @@ class CompetitionProfileTests(unittest.TestCase):
             self.assertIn("教师批改意见", visible_text)
             self.assertIn("教师评语", visible_text)
             self.assertIn("教师已核对图片、正文和课程标准", visible_text)
+            self.assertIn("附录：证据引用索引（LabTrace）", visible_text)
+            self.assertIn("[1]", visible_text)
             with zipfile.ZipFile(output_path) as package:
                 self.assertIn("word/comments.xml", package.namelist())
                 comments = package.read("word/comments.xml").decode("utf-8")
@@ -457,6 +460,16 @@ class CompetitionProfileTests(unittest.TestCase):
             self.assertEqual(trace.model_total_score, expected_score)
             self.assertTrue(trace.needs_human_review)
             self.assertGreaterEqual(len(trace.evidence), 6)
+            self.assertTrue(
+                all(
+                    item.evidence_id.startswith(("p-", "t-", "i-"))
+                    for item in trace.evidence
+                )
+            )
+            self.assertEqual(
+                len({item.evidence_id for item in trace.evidence}),
+                len(trace.evidence),
+            )
             text = "\n".join(
                 str(item.get("text", "")) for item in parsed.get("paragraphs") or []
             )
@@ -549,6 +562,25 @@ class CompetitionProfileTests(unittest.TestCase):
                 self.assertGreaterEqual(
                     task["delivery"]["details"]["annotations_count"], 4
                 )
+                self.assertTrue(
+                    task["delivery"]["details"]["evidence_appendix_appended"]
+                )
+                self.assertEqual(
+                    [item["reference_number"] for item in task["evidence_appendix"]],
+                    list(range(1, len(task["evidence_appendix"]) + 1)),
+                )
+                self.assertTrue(
+                    all(
+                        item["location_label"].startswith("Word ")
+                        for item in task["evidence_appendix"]
+                    )
+                )
+                self.assertGreaterEqual(len(task["word_comments"]), 4)
+                self.assertEqual(
+                    len(task["word_comments"]),
+                    task["word_workflow"]["native_comments"],
+                )
+                self.assertTrue(task["word_comments"][0]["reference_numbers"])
                 criteria = []
                 for item in task["trace"]["criteria"]:
                     if item["criterion_id"] == "analysis_and_validation":
@@ -594,6 +626,8 @@ class CompetitionProfileTests(unittest.TestCase):
                     ]
                 )
                 self.assertIn("教师已核对 ELISA 证据并确认两分调整", reviewed_text)
+                self.assertIn("附录：证据引用索引（LabTrace）", reviewed_text)
+                self.assertIn("[1]", reviewed_text)
                 with zipfile.ZipFile(io.BytesIO(report_download.content)) as package:
                     self.assertIn("word/comments.xml", package.namelist())
                     comments = package.read("word/comments.xml").decode("utf-8")
@@ -602,6 +636,17 @@ class CompetitionProfileTests(unittest.TestCase):
                     f"/labtrace-api/tasks/{task['task_id']}/download?kind=trace"
                 )
                 self.assertEqual(trace_download.status_code, 200)
+                trace_payload = trace_download.json()
+                self.assertEqual(
+                    len(trace_payload["evidence_appendix"]),
+                    len(completed["trace"]["evidence"]),
+                )
+                self.assertTrue(trace_payload["word_comments"])
+                source_download = client.get(
+                    f"/labtrace-api/tasks/{task['task_id']}/download?kind=source"
+                )
+                self.assertEqual(source_download.status_code, 200)
+                self.assertEqual(source_download.content, sample_path.read_bytes())
                 deleted = client.delete(f"/labtrace-api/tasks/{task['task_id']}")
                 self.assertEqual(deleted.status_code, 200)
                 self.assertEqual(

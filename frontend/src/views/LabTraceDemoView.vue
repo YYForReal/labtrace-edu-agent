@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, shallowRef } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   deleteLabTraceTask,
   getLabTraceBootstrap,
+  getLabTraceTask,
   gradeLabTraceDemo,
   labTraceDownloadUrl,
   labTracePublicUrl,
@@ -26,6 +27,13 @@ const reviewSuggestionScore = ref(0)
 const reviewNote = ref('已核对证据定位与评分标准，并完成教师终审。')
 const fileInput = ref<HTMLInputElement>()
 const rubricInput = ref<HTMLInputElement>()
+const docxContainer = ref<HTMLElement | null>(null)
+const docxPreviewModule = shallowRef<any>(null)
+const previewLoading = ref(false)
+const previewError = ref('')
+const previewKind = ref<'source' | 'report'>('report')
+const activeEvidenceId = ref('')
+let previewSequence = 0
 
 const totalScore = computed(() => {
   if (!task.value) return 0
@@ -35,6 +43,18 @@ const totalScore = computed(() => {
 const evidenceMap = computed(() => {
   const result: Record<string, LabTraceTask['trace']['evidence'][number]> = {}
   for (const item of task.value?.trace.evidence || []) result[item.evidence_id] = item
+  return result
+})
+
+const citationByEvidence = computed(() => {
+  const result: Record<string, LabTraceTask['evidence_appendix'][number]> = {}
+  for (const item of task.value?.evidence_appendix || []) result[item.evidence_id] = item
+  return result
+})
+
+const wordCommentByCriterion = computed(() => {
+  const result: Record<string, LabTraceTask['word_comments'][number]> = {}
+  for (const item of task.value?.word_comments || []) result[item.criterion_id] = item
   return result
 })
 
@@ -63,9 +83,110 @@ const teacherAdjustment = computed(() => {
   }
 })
 
+async function renderWordPreview(kind: 'source' | 'report' = previewKind.value) {
+  if (!task.value?.word_workflow.input_is_word) return
+  previewKind.value = kind
+  previewLoading.value = true
+  previewError.value = ''
+  activeEvidenceId.value = ''
+  const sequence = ++previewSequence
+  await nextTick()
+  const container = docxContainer.value
+  if (container) container.innerHTML = ''
+  try {
+    if (!docxPreviewModule.value) docxPreviewModule.value = await import('docx-preview')
+    const response = await fetch(labTraceDownloadUrl(task.value.task_id, kind), {
+      cache: 'no-cache',
+    })
+    if (!response.ok) throw new Error(`Word 预览加载失败（HTTP ${response.status}）`)
+    const blob = await response.blob()
+    if (sequence !== previewSequence || !container) return
+    await docxPreviewModule.value.renderAsync(blob, container, undefined, {
+      className: 'labtrace-docx',
+      inWrapper: true,
+      ignoreWidth: false,
+      ignoreHeight: false,
+      useBase64URL: true,
+      breakPages: true,
+      experimental: true,
+    })
+  } catch (error: any) {
+    if (sequence === previewSequence) previewError.value = error?.message || 'Word 预览加载失败'
+  } finally {
+    if (sequence === previewSequence) previewLoading.value = false
+  }
+}
+
+function normalizePreviewText(value: string | null | undefined) {
+  return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function focusEvidence(evidenceId: string) {
+  const evidence = evidenceMap.value[evidenceId]
+  const root = docxContainer.value
+  if (!evidence || !root) return
+  activeEvidenceId.value = evidenceId
+  root.querySelectorAll('.labtrace-evidence-highlight').forEach((element) => {
+    element.classList.remove('labtrace-evidence-highlight')
+  })
+
+  let target: HTMLElement | undefined
+  // Tables and images have unambiguous structural locators. Resolve them before
+  // excerpt matching so the copy repeated in the generated appendix is not selected.
+  if (evidence.kind === 'table') {
+    const match = evidence.locator.match(/table:(\d+)/)
+    const tables = Array.from(root.querySelectorAll<HTMLElement>('table'))
+    if (match) target = tables[Number(match[1]) - 1]
+  }
+  if (['image', 'image_context', 'chart'].includes(evidence.kind)) {
+    const match = evidence.locator.match(/image:(\d+)/)
+    const images = Array.from(root.querySelectorAll<HTMLElement>('img'))
+    if (match) target = images[Number(match[1]) - 1]
+  }
+  if (!target) {
+    const candidates = Array.from(root.querySelectorAll<HTMLElement>('p, td, th'))
+    const excerpt = normalizePreviewText(evidence.excerpt)
+    const needle = excerpt.slice(0, Math.min(24, excerpt.length))
+    target = needle
+      ? candidates.find(element => normalizePreviewText(element.textContent).includes(needle))
+      : undefined
+  }
+  if (!target) {
+    const match = evidence.locator.match(/paragraph:(\d+)/)
+    const paragraphs = Array.from(root.querySelectorAll<HTMLElement>('p'))
+    if (match) target = paragraphs[Number(match[1]) - 1]
+  }
+
+  if (target) {
+    target.classList.add('labtrace-evidence-highlight')
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  } else {
+    ElMessage.info(`${citationByEvidence.value[evidenceId]?.citation || evidenceId} 已定位到 ${citationByEvidence.value[evidenceId]?.location_label || evidence.locator}`)
+  }
+}
+
+async function openTeacherConsole() {
+  if (!task.value) {
+    ElMessage.info('请先载入样例并运行批改 Agent，随后即可进入教师管理台。')
+    document.querySelector('.workbench')?.scrollIntoView({ behavior: 'smooth' })
+    return
+  }
+  window.history.replaceState(null, '', '#teacher-console')
+  await nextTick()
+  document.querySelector('#teacher-console')?.scrollIntoView({ behavior: 'smooth' })
+  if (!docxContainer.value?.childElementCount) await renderWordPreview('report')
+}
+
 onMounted(async () => {
   try {
     bootstrap.value = (await getLabTraceBootstrap()).data
+    const storedTaskId = sessionStorage.getItem('labtrace-teacher-task')
+    if (window.location.hash === '#teacher-console' && storedTaskId) {
+      task.value = (await getLabTraceTask(storedTaskId)).data
+      reviewSuggestionScore.value = Number(reviewTarget.value?.score || 0)
+      await nextTick()
+      await renderWordPreview('report')
+    }
   } catch {
     ElMessage.error('演示服务尚未启动，请按运行说明启动后刷新页面。')
   }
@@ -75,6 +196,8 @@ function chooseFile(event: Event) {
   const files = (event.target as HTMLInputElement).files
   selectedFile.value = files?.[0] || null
   task.value = null
+  previewError.value = ''
+  if (docxContainer.value) docxContainer.value.innerHTML = ''
 }
 
 function chooseRubric(event: Event) {
@@ -102,6 +225,7 @@ async function loadSample(sampleId = selectedSampleId.value) {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     })
     task.value = null
+    previewError.value = ''
     ElMessage.success(`已载入：${sample.name}`)
   } catch {
     ElMessage.error('样例报告尚未生成，请先运行数据构建脚本。')
@@ -125,6 +249,7 @@ async function runAgent() {
         allowExternalImages.value,
       )
     ).data
+    sessionStorage.setItem('labtrace-teacher-task', task.value.task_id)
     reviewSuggestionScore.value = Number(reviewTarget.value?.score || 0)
     reviewNote.value = `已核对证据定位与评分标准；将“${reviewTarget.value?.criterion_name || '待复核维度'}”从 ${teacherAdjustment.value.from} 分调整为 ${teacherAdjustment.value.to} 分后确认发布。`
     ElMessage.success(
@@ -132,6 +257,8 @@ async function runAgent() {
         ? '真实模型建议与证据链已生成，现已转交教师终审'
         : '证据链已生成；本次使用可复现规则或显式降级路径',
     )
+    await nextTick()
+    await renderWordPreview('report')
     requestAnimationFrame(() => document.querySelector('#trace-result')?.scrollIntoView({ behavior: 'smooth' }))
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.detail || '报告处理失败')
@@ -161,6 +288,9 @@ async function submitReview() {
       })),
       reviewNote.value,
     )).data
+    sessionStorage.setItem('labtrace-teacher-task', task.value.task_id)
+    await nextTick()
+    await renderWordPreview('report')
     ElMessage.success('教师终审完成，成绩与学情诊断已发布')
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.detail || '终审提交失败')
@@ -177,6 +307,9 @@ async function deleteTaskData() {
     task.value = null
     selectedFile.value = null
     rubricFile.value = null
+    sessionStorage.removeItem('labtrace-teacher-task')
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    if (docxContainer.value) docxContainer.value.innerHTML = ''
     ElMessage.success('本次上传、证据链和交付物已删除')
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.detail || '删除失败，请稍后重试')
@@ -196,11 +329,17 @@ async function deleteTaskData() {
           <small>高校实验报告批改 Agent</small>
         </span>
       </a>
-      <div class="top-meta">
-        <span class="live-dot"></span>
-        <span>{{ bootstrap?.mode.external_processing ? '真实模型在线' : '可离线复现' }}</span>
-        <span class="top-rule"></span>
-        <span>GOAI 2026 · AI+教育</span>
+      <div class="top-actions">
+        <button class="teacher-entry" type="button" @click="openTeacherConsole">
+          教师管理台
+          <span v-if="task">{{ completed ? '已终审' : '待处理 1' }}</span>
+        </button>
+        <div class="top-meta">
+          <span class="live-dot"></span>
+          <span>{{ bootstrap?.mode.external_processing ? '真实模型在线' : '可离线复现' }}</span>
+          <span class="top-rule"></span>
+          <span>GOAI 2026 · AI+教育</span>
+        </div>
       </div>
     </header>
 
@@ -396,82 +535,172 @@ async function deleteTaskData() {
           </div>
         </div>
 
-        <div class="result-grid">
-          <div class="criteria-panel">
-            <div class="panel-title">
-              <h3>逐项评分与证据账本</h3>
-              <span>{{ task.trace.evidence.length }} 条可定位证据</span>
+        <div id="teacher-console" class="teacher-console-shell">
+          <header class="console-header">
+            <div>
+              <span class="console-kicker">TEACHER REVIEW DESK</span>
+              <h3>教师管理台 · 原文、批注、评分同屏复核</h3>
             </div>
-            <article
-              v-for="criterion in task.trace.criteria"
-              :key="criterion.criterion_id"
-              class="criterion-card"
-              :class="{ uncertain: criterion.confidence < 0.75 }"
-            >
-              <div class="criterion-score">
-                <span>{{ criterion.criterion_name }}</span>
-                <div>
-                  <input v-model.number="criterion.score" :max="criterion.max_score" min="0" step="0.5" type="number">
-                  <small>/ {{ criterion.max_score }}</small>
-                </div>
-              </div>
-              <p>{{ criterion.reason }}</p>
-              <div class="criterion-meta">
-                <span :class="{ warning: criterion.confidence < 0.75 }">
-                  置信度 {{ Math.round(criterion.confidence * 100) }}%
-                </span>
-                <span v-if="criterion.confidence < 0.75" class="review-flag">需教师确认</span>
-              </div>
-              <div class="evidence-list">
-                <div v-for="id in criterion.evidence_ids" :key="id" class="evidence-row">
-                  <span class="locator">{{ evidenceMap[id]?.locator }}</span>
-                  <div>
-                    <q>{{ evidenceMap[id]?.excerpt }}</q>
-                    <small
-                      v-if="evidenceMap[id]?.kind === 'image_context'"
-                      :class="{ observed: evidenceMap[id]?.verification === 'model_observed' }"
-                    >
-                      {{ evidenceMap[id]?.verification === 'model_observed'
-                        ? '模型已查看授权图片 · 将定位回 Word'
-                        : '仅使用图片邻近文本 · 未查看图片' }}
-                    </small>
-                  </div>
-                </div>
-              </div>
-            </article>
-          </div>
+            <div class="console-status">
+              <span>{{ task.input_filename }}</span>
+              <b :class="{ done: completed }">{{ completed ? '已终审' : '待教师确认' }}</b>
+            </div>
+          </header>
 
-          <aside class="review-panel">
-            <div class="panel-kicker">HUMAN-IN-THE-LOOP</div>
-            <h3>{{ completed ? '教师终审已完成' : '请教师确认低置信度判断' }}</h3>
-            <p v-for="reason in task.trace.review_reasons" :key="reason" class="review-reason">{{ reason }}</p>
-            <label>教师总评（确认后写回 Word）</label>
-            <textarea v-model="reviewNote" :disabled="completed" rows="5"></textarea>
-            <button
-              v-if="!completed && reviewTarget"
-              class="quick-adjust"
-              type="button"
-              @click="applyTeacherAdjustment"
-            >
-              应用教师调整 · {{ reviewTarget.criterion_name }}
-              {{ teacherAdjustment.from }} → {{ teacherAdjustment.to }}
-            </button>
-            <button class="primary-btn review-btn" :disabled="reviewing || completed" @click="submitReview">
-              {{ completed ? '已确认并发布' : reviewing ? '提交中…' : '确认调整并发布' }}
-            </button>
-            <div class="guardrail">
-              <strong>教学边界</strong>
-              <span>AI 只生成辅助建议；正式成绩由教师确认。上传材料 24 小时自动删除，也可立即删除。</span>
-            </div>
-            <div v-if="completed" class="download-links">
-              <a :href="labTraceDownloadUrl(task.task_id, 'report')">下载可编辑批注 Word ↗</a>
-              <a :href="labTraceDownloadUrl(task.task_id, 'trace')">下载证据链 JSON ↗</a>
-              <button type="button" :disabled="deleting" @click="deleteTaskData">
-                {{ deleting ? '正在删除…' : '立即删除本次数据' }}
-              </button>
-            </div>
-          </aside>
+          <div class="teacher-console-grid">
+            <section class="report-preview-panel">
+              <div class="report-toolbar">
+                <div>
+                  <strong>Word 报告预览</strong>
+                  <span>点击右侧 [n] 引用，可回到对应段落、表格或图片</span>
+                </div>
+                <div class="preview-switch" role="group" aria-label="Word 版本">
+                  <button
+                    type="button"
+                    :class="{ active: previewKind === 'source' }"
+                    @click="renderWordPreview('source')"
+                  >原始报告</button>
+                  <button
+                    type="button"
+                    :class="{ active: previewKind === 'report' }"
+                    @click="renderWordPreview('report')"
+                  >批改版 Word</button>
+                </div>
+              </div>
+              <div class="report-preview-scroll">
+                <div v-if="previewLoading" class="preview-placeholder">
+                  <span class="preview-spinner"></span>
+                  正在还原 Word 图文版式…
+                </div>
+                <div v-else-if="previewError" class="preview-placeholder error">{{ previewError }}</div>
+                <div
+                  v-show="!previewLoading && !previewError"
+                  ref="docxContainer"
+                  class="docx-host"
+                ></div>
+              </div>
+            </section>
+
+            <aside class="teacher-score-panel">
+              <div class="score-panel-head">
+                <div>
+                  <span>{{ completed ? '最终成绩' : 'Agent 建议分' }}</span>
+                  <strong>{{ totalScore }}<small>/{{ task.rubric.total_score }}</small></strong>
+                </div>
+                <div>
+                  <b>{{ task.word_comments.length }}</b>
+                  <span>Word 批注</span>
+                </div>
+                <div>
+                  <b>{{ task.evidence_appendix.length }}</b>
+                  <span>引用证据</span>
+                </div>
+              </div>
+
+              <div class="score-card-list">
+                <article
+                  v-for="criterion in task.trace.criteria"
+                  :key="criterion.criterion_id"
+                  class="criterion-card"
+                  :class="{ uncertain: criterion.confidence < 0.75 }"
+                >
+                  <div class="criterion-score">
+                    <span>{{ criterion.criterion_name }}</span>
+                    <div>
+                      <input v-model.number="criterion.score" :disabled="completed" :max="criterion.max_score" min="0" step="0.5" type="number">
+                      <small>/ {{ criterion.max_score }}</small>
+                    </div>
+                  </div>
+                  <p>{{ criterion.reason }}</p>
+                  <div class="criterion-meta">
+                    <span :class="{ warning: criterion.confidence < 0.75 }">
+                      置信度 {{ Math.round(criterion.confidence * 100) }}%
+                    </span>
+                    <span v-if="wordCommentByCriterion[criterion.criterion_id]" class="comment-badge">
+                      {{ wordCommentByCriterion[criterion.criterion_id].comment_id }} · Word 原生批注
+                    </span>
+                  </div>
+                  <div class="citation-links" aria-label="关联证据">
+                    <button
+                      v-for="id in criterion.evidence_ids"
+                      :key="id"
+                      type="button"
+                      :class="{ active: activeEvidenceId === id }"
+                      @click="focusEvidence(id)"
+                    >
+                      <b>{{ citationByEvidence[id]?.citation || id }}</b>
+                      <span>{{ citationByEvidence[id]?.location_label || evidenceMap[id]?.locator }}</span>
+                    </button>
+                  </div>
+                </article>
+              </div>
+
+              <div class="review-box">
+                <div class="panel-kicker">HUMAN-IN-THE-LOOP</div>
+                <h3>{{ completed ? '教师终审已完成' : '确认低置信度判断' }}</h3>
+                <details v-if="task.trace.review_reasons.length" class="review-reasons-box">
+                  <summary>{{ task.trace.review_reasons.length }} 项复核提醒</summary>
+                  <p v-for="reason in task.trace.review_reasons" :key="reason">{{ reason }}</p>
+                </details>
+                <label>教师总评（确认后写回 Word）</label>
+                <textarea v-model="reviewNote" :disabled="completed" rows="4"></textarea>
+                <button
+                  v-if="!completed && reviewTarget"
+                  class="quick-adjust"
+                  type="button"
+                  @click="applyTeacherAdjustment"
+                >
+                  应用教师调整 · {{ reviewTarget.criterion_name }}
+                  {{ teacherAdjustment.from }} → {{ teacherAdjustment.to }}
+                </button>
+                <button class="primary-btn review-btn" :disabled="reviewing || completed" @click="submitReview">
+                  {{ completed ? '已确认并发布' : reviewing ? '提交中…' : '确认调整并发布' }}
+                </button>
+                <div class="guardrail">
+                  <strong>教学边界</strong>
+                  <span>AI 只生成辅助建议；正式成绩由教师确认。上传材料 24 小时自动删除，也可立即删除。</span>
+                </div>
+                <div v-if="completed" class="download-links">
+                  <a :href="labTraceDownloadUrl(task.task_id, 'report')">下载可编辑批注 Word ↗</a>
+                  <a :href="labTraceDownloadUrl(task.task_id, 'trace')">下载含附录的证据链 JSON ↗</a>
+                  <button type="button" :disabled="deleting" @click="deleteTaskData">
+                    {{ deleting ? '正在删除…' : '立即删除本次数据' }}
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </div>
         </div>
+
+        <section class="evidence-appendix">
+          <div class="appendix-head">
+            <div>
+              <p class="eyebrow">EVIDENCE APPENDIX</p>
+              <h3>附录 · 科研式证据引用索引</h3>
+              <p>评分理由与 Word 批注统一使用 [n]；内部 p-/t-/i- 编号保留用于工程追溯。</p>
+            </div>
+            <span>{{ task.evidence_appendix.length }} REFERENCES</span>
+          </div>
+          <button
+            v-for="reference in task.evidence_appendix"
+            :key="reference.evidence_id"
+            type="button"
+            class="appendix-entry"
+            :class="{ active: activeEvidenceId === reference.evidence_id }"
+            @click="focusEvidence(reference.evidence_id)"
+          >
+            <b>{{ reference.citation }}</b>
+            <div class="appendix-locator">
+              <code>{{ reference.evidence_id }}</code>
+              <span>{{ reference.location_label }}</span>
+              <small>{{ reference.kind_label }}</small>
+            </div>
+            <p>{{ reference.excerpt }}</p>
+            <div class="appendix-linked">
+              <span v-for="name in reference.linked_criteria" :key="name">{{ name }}</span>
+            </div>
+          </button>
+        </section>
 
         <div v-if="completed && task.diagnosis" class="diagnosis-panel">
           <div>
@@ -554,10 +783,14 @@ async function deleteTaskData() {
 .brand strong em { color: var(--mint); font-style: normal; }
 .brand small { margin-top: 2px; color: #68756f; font-size: 10px; letter-spacing: .12em; }
 .top-meta { display: flex; align-items: center; gap: 10px; color: #66736e; font-size: 12px; }
+.top-actions { display: flex; align-items: center; gap: 18px; }
+.teacher-entry { display: flex; align-items: center; gap: 8px; padding: 9px 12px; color: var(--forest); border: 1px solid rgba(23,77,64,.24); background: rgba(255,255,255,.52); font: 700 11px/1 "DM Sans", sans-serif; cursor: pointer; }
+.teacher-entry:hover { color: #fff; background: var(--forest); }
+.teacher-entry span { padding: 3px 5px; color: #fff; background: var(--orange); font-size: 8px; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #2da77f; box-shadow: 0 0 0 5px rgba(45, 167, 127, .1); }
 .top-rule { width: 1px; height: 14px; background: var(--line); margin: 0 4px; }
 
-main { overflow: hidden; }
+main { overflow-x: clip; }
 .hero, .workflow, .workbench, .result-section, footer { width: min(1180px, calc(100% - 48px)); margin-inline: auto; }
 .hero { min-height: 610px; display: grid; grid-template-columns: 1.3fr .7fr; align-items: center; gap: 80px; padding: 54px 0 40px; }
 .eyebrow { margin: 0 0 18px; color: var(--orange); font: 700 11px/1.2 "DM Sans", sans-serif; letter-spacing: .2em; }
@@ -642,7 +875,7 @@ main { overflow: hidden; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 
-.result-section { padding: 80px 0; border-top: 1px solid var(--line); }
+.result-section { width: min(1480px, calc(100% - 48px)); padding: 80px 0; border-top: 1px solid var(--line); }
 .result-header { display: flex; justify-content: space-between; align-items: end; padding-bottom: 34px; }
 .result-header h2 { margin: 0; font: 600 34px/1 Georgia, serif; }
 .result-header h2 span { color: var(--orange); font-size: 66px; }
@@ -662,6 +895,78 @@ main { overflow: hidden; }
 .delivery-facts { display: flex; align-items: center; gap: 22px; }
 .delivery-facts span { color: #b9cbc5; font-size: 10px; white-space: nowrap; }
 .delivery-facts b { display: block; margin-bottom: 5px; color: #f3a185; font: 600 20px/1 Georgia, serif; }
+.teacher-console-shell { min-width: 0; border: 1px solid var(--line); background: rgba(255,255,255,.58); }
+.console-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 19px 22px; border-bottom: 1px solid var(--line); background: #fff; }
+.console-kicker { color: var(--orange); font: 800 9px/1 "DM Sans", sans-serif; letter-spacing: .17em; }
+.console-header h3 { margin: 7px 0 0; font: 600 20px/1.2 Georgia, "Songti SC", serif; }
+.console-status { min-width: 0; display: flex; align-items: center; gap: 10px; color: #6d7a75; font-size: 11px; }
+.console-status span { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-status b { flex: 0 0 auto; padding: 6px 8px; color: #9d472e; border: 1px solid rgba(220,99,63,.35); background: rgba(220,99,63,.08); font-size: 10px; }
+.console-status b.done { color: var(--mint); border-color: rgba(27,139,115,.3); background: rgba(27,139,115,.07); }
+.teacher-console-grid { min-width: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(360px, .75fr); gap: 0; height: 820px; }
+.report-preview-panel, .teacher-score-panel { min-width: 0; min-height: 0; }
+.report-preview-panel { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: #e8ebe7; }
+.report-toolbar { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px; border-bottom: 1px solid var(--line); background: #f9faf8; }
+.report-toolbar strong, .report-toolbar span { display: block; }
+.report-toolbar strong { font-size: 13px; }
+.report-toolbar span { margin-top: 3px; color: #718079; font-size: 9px; }
+.preview-switch { flex: 0 0 auto; display: flex; padding: 3px; background: #e8ece8; }
+.preview-switch button { padding: 7px 10px; color: #63706b; border: 0; background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
+.preview-switch button.active { color: #fff; background: var(--forest); }
+.report-preview-scroll { min-width: 0; min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; }
+.preview-placeholder { min-height: 420px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #73817b; font-size: 12px; }
+.preview-placeholder.error { color: #a4482d; }
+.preview-spinner { width: 18px; height: 18px; border: 2px solid rgba(23,77,64,.16); border-top-color: var(--forest); border-radius: 50%; animation: spin .8s linear infinite; }
+.docx-host { min-width: 0; min-height: 100%; }
+.docx-host :deep(.docx-wrapper),
+.docx-host :deep(.labtrace-docx-wrapper) { padding: 22px 12px !important; background: #e8ebe7 !important; }
+.docx-host :deep(.labtrace-docx) { max-width: 100%; margin: 0 auto 22px !important; box-shadow: 0 8px 30px rgba(21,35,31,.15) !important; }
+.docx-host :deep(.labtrace-evidence-highlight) { outline: 3px solid rgba(220,99,63,.78) !important; outline-offset: 4px; background: rgba(255,225,130,.34) !important; transition: outline-color .2s ease; }
+.teacher-score-panel { display: flex; flex-direction: column; color: #fff; background: var(--ink); overflow: hidden; }
+.score-panel-head { flex: 0 0 auto; display: grid; grid-template-columns: 1.25fr .7fr .7fr; border-bottom: 1px solid rgba(255,255,255,.12); }
+.score-panel-head > div { padding: 15px 14px; border-right: 1px solid rgba(255,255,255,.1); }
+.score-panel-head > div:last-child { border-right: 0; }
+.score-panel-head span, .score-panel-head b, .score-panel-head strong { display: block; }
+.score-panel-head span { color: #8fa39b; font-size: 9px; }
+.score-panel-head strong { margin-top: 4px; color: #f3a185; font: 600 29px/1 Georgia, serif; }
+.score-panel-head strong small { color: #91a49d; font-size: 12px; }
+.score-panel-head b { margin-bottom: 5px; color: #f3a185; font: 600 20px/1 Georgia, serif; }
+.score-card-list { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
+.score-card-list .criterion-card { border-color: rgba(255,255,255,.1); background: transparent; }
+.score-card-list .criterion-card.uncertain { background: rgba(220,99,63,.09); }
+.score-card-list .criterion-score > span { color: #f2f6f4; }
+.score-card-list .criterion-score input { color: #fff; border-color: rgba(255,255,255,.2); background: rgba(255,255,255,.08); }
+.score-card-list .criterion-score input:disabled { opacity: .7; }
+.score-card-list .criterion-card > p { color: #b8c5c0; overflow-wrap: anywhere; word-break: break-word; }
+.comment-badge { color: #f3a185 !important; }
+.citation-links { min-width: 0; display: grid; gap: 6px; margin-top: 11px; }
+.citation-links button { min-width: 0; width: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 8px; align-items: center; padding: 7px 9px; color: #b8c7c1; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); text-align: left; cursor: pointer; }
+.citation-links button:hover, .citation-links button.active { border-color: #f3a185; background: rgba(243,161,133,.1); }
+.citation-links b { color: #f3a185; font: 700 11px/1 "DM Sans", sans-serif; }
+.citation-links span { min-width: 0; overflow-wrap: anywhere; font-size: 9px; line-height: 1.4; }
+.review-box { flex: 0 0 auto; padding: 17px 20px 20px; border-top: 1px solid rgba(255,255,255,.12); background: #10211c; }
+.review-box h3 { margin: 8px 0 10px; font: 600 18px/1.2 Georgia, "Songti SC", serif; }
+.review-reasons-box { margin-bottom: 10px; color: #d7c5bd; font-size: 10px; }
+.review-reasons-box summary { color: #f3a185; cursor: pointer; }
+.review-reasons-box p { margin: 8px 0; padding-left: 8px; border-left: 2px solid var(--orange); line-height: 1.5; overflow-wrap: anywhere; }
+.review-box label { display: block; margin: 8px 0 6px; color: #9eb0aa; font-size: 10px; }
+.review-box textarea { width: 100%; box-sizing: border-box; padding: 9px; resize: vertical; color: #e9efec; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.15); font: inherit; font-size: 11px; line-height: 1.5; }
+.evidence-appendix { margin-top: 28px; padding: 27px; border: 1px solid var(--line); background: rgba(255,255,255,.72); }
+.appendix-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.appendix-head .eyebrow { margin-bottom: 8px; }
+.appendix-head h3 { margin: 0; font: 600 22px/1.2 Georgia, "Songti SC", serif; }
+.appendix-head p:last-child { margin: 7px 0 0; color: #6d7a75; font-size: 11px; }
+.appendix-head > span { color: var(--orange); font: 800 9px/1 "DM Sans", sans-serif; letter-spacing: .14em; }
+.appendix-entry { min-width: 0; width: 100%; display: grid; grid-template-columns: 48px 215px minmax(0, 1fr) minmax(120px, 210px); gap: 14px; align-items: start; padding: 13px 10px; color: var(--ink); border: 0; border-top: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
+.appendix-entry:hover, .appendix-entry.active { background: rgba(27,139,115,.07); }
+.appendix-entry > b { color: var(--orange); font: 700 16px/1.4 "DM Sans", sans-serif; }
+.appendix-locator code, .appendix-locator span, .appendix-locator small { display: block; }
+.appendix-locator code { color: var(--mint); font-size: 10px; font-weight: 800; }
+.appendix-locator span { margin-top: 4px; font-size: 10px; overflow-wrap: anywhere; }
+.appendix-locator small { margin-top: 4px; color: #7a8782; font-size: 9px; }
+.appendix-entry > p { min-width: 0; margin: 0; color: #596861; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; word-break: break-word; }
+.appendix-linked { display: flex; flex-wrap: wrap; gap: 5px; }
+.appendix-linked span { padding: 4px 5px; color: var(--forest); border: 1px solid rgba(23,77,64,.18); font-size: 8px; line-height: 1.3; overflow-wrap: anywhere; }
 .result-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 26px; align-items: start; }
 .criteria-panel { background: #fff; border: 1px solid var(--line); }
 .panel-title { padding: 21px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); }
@@ -682,7 +987,7 @@ main { overflow: hidden; }
 .evidence-list { margin-top: 12px; display: grid; gap: 7px; }
 .evidence-row { display: grid; grid-template-columns: 128px 1fr; gap: 10px; padding: 8px 10px; background: #f4f6f3; font-size: 11px; }
 .locator { color: var(--mint); font: 700 10px/1.5 "DM Sans", monospace; }
-.evidence-row q { display: block; color: #60706a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evidence-row q { display: block; min-width: 0; color: #60706a; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .evidence-row small { display: block; margin-top: 5px; color: #9a5a43; font-size: 9px; font-weight: 700; }
 .evidence-row small.observed { color: var(--mint); }
 
@@ -723,6 +1028,12 @@ footer { padding: 28px 0 44px; display: flex; justify-content: space-between; co
   .rubric-panel { grid-template-columns: 1fr auto; }
   .upload-panel .secondary-btn, .upload-panel .run-btn { width: 100%; }
   .result-grid { grid-template-columns: 1fr; }
+  .teacher-console-grid { grid-template-columns: 1fr; height: auto; }
+  .report-preview-panel { height: 700px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .teacher-score-panel { max-height: none; overflow: visible; }
+  .score-card-list { max-height: 620px; }
+  .appendix-entry { grid-template-columns: 48px minmax(0, 1fr); }
+  .appendix-entry > p, .appendix-linked { grid-column: 2; }
   .word-delivery-banner { align-items: flex-start; flex-direction: column; }
   .review-panel { position: static; }
   .diagnosis-panel { grid-template-columns: 1fr; }
@@ -730,6 +1041,9 @@ footer { padding: 28px 0 44px; display: flex; justify-content: space-between; co
 
 @media (max-width: 600px) {
   .top-meta { display: none; }
+  .topbar { padding-inline: 14px; }
+  .top-actions { gap: 0; }
+  .teacher-entry { padding: 8px 9px; }
   .hero, .workflow, .workbench, .result-section, footer { width: min(100% - 28px, 1180px); }
   .hero h1 { font-size: 42px; }
   .hero-actions, .workbench-head, .result-header, .profile, footer { align-items: flex-start; flex-direction: column; }
@@ -739,6 +1053,14 @@ footer { padding: 28px 0 44px; display: flex; justify-content: space-between; co
   .data-notice { flex-direction: column; }
   .profile { gap: 14px; }
   .delivery-facts { flex-wrap: wrap; }
+  .console-header, .report-toolbar, .appendix-head { align-items: flex-start; flex-direction: column; }
+  .console-status { width: 100%; justify-content: space-between; }
+  .report-preview-panel { height: 590px; }
+  .score-panel-head { grid-template-columns: 1.2fr .8fr .8fr; }
+  .score-panel-head > div { padding: 12px 9px; }
+  .score-card-list { max-height: 560px; }
+  .evidence-appendix { padding: 20px 14px; }
+  .appendix-entry { grid-template-columns: 38px minmax(0, 1fr); gap: 9px; padding-inline: 4px; }
   .profile b, .profile span { text-align: left; }
   .evidence-row { grid-template-columns: 1fr; }
 }

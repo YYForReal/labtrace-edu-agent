@@ -196,8 +196,63 @@ def _find_grading_table_index(input_path: Path) -> int:
     return max(0, len(document.tables) - 1)
 
 
+_EVIDENCE_KIND_LABELS = {
+    "paragraph": "正文段落",
+    "table": "数据表格",
+    "chart": "图表",
+    "image": "内嵌图片",
+    "image_context": "图片与邻近文本",
+}
+
+
+def _evidence_location_label(evidence: Any) -> str:
+    """Translate parser locators into teacher-facing Word locations."""
+    locator = str(evidence.locator)
+    paragraph = re.search(r"paragraph:(\d+)", locator)
+    table = re.search(r"table:(\d+)", locator)
+    image = re.search(r"image:(\d+)", locator)
+    anchor = re.search(r"@paragraph:(\d+)", locator)
+    if table:
+        return f"Word 第 {int(table.group(1))} 个表格"
+    if image:
+        label = f"Word 第 {int(image.group(1))} 张图片"
+        if anchor:
+            label += f"（锚定正文第 {int(anchor.group(1))} 段）"
+        return label
+    if paragraph:
+        return f"Word 正文第 {int(paragraph.group(1))} 段"
+    return locator
+
+
+def _build_evidence_appendix(trace: GradeTrace) -> list[dict[str, Any]]:
+    """Build a stable [n] citation registry shared by web, JSON and Word."""
+    linked: dict[str, list[str]] = defaultdict(list)
+    for decision in trace.criteria:
+        for evidence_id in decision.evidence_ids:
+            if decision.criterion_name not in linked[evidence_id]:
+                linked[evidence_id].append(decision.criterion_name)
+    return [
+        {
+            "reference_number": index,
+            "citation": f"[{index}]",
+            "evidence_id": evidence.evidence_id,
+            "kind": evidence.kind,
+            "kind_label": _EVIDENCE_KIND_LABELS.get(evidence.kind, evidence.kind),
+            "locator": evidence.locator,
+            "location_label": _evidence_location_label(evidence),
+            "excerpt": evidence.excerpt,
+            "reliability": evidence.reliability,
+            "verification": evidence.verification,
+            "linked_criteria": linked.get(evidence.evidence_id, []),
+        }
+        for index, evidence in enumerate(trace.evidence, start=1)
+    ]
+
+
 def _annotation_config(trace: GradeTrace, *, table_index: int = 1) -> dict[str, Any]:
     evidence_by_id = {item.evidence_id: item for item in trace.evidence}
+    appendix = _build_evidence_appendix(trace)
+    reference_by_id = {item["evidence_id"]: item for item in appendix}
     annotations = []
     for decision in trace.criteria:
         image_target = next(
@@ -220,6 +275,12 @@ def _annotation_config(trace: GradeTrace, *, table_index: int = 1) -> dict[str, 
         target = image_target or paragraph_target
         if not target or not target.excerpt:
             continue
+        reference_numbers = [
+            int(reference_by_id[evidence_id]["reference_number"])
+            for evidence_id in decision.evidence_ids
+            if evidence_id in reference_by_id
+        ]
+        citations = "".join(f"[{number}]" for number in reference_numbers)
         if image_target:
             paragraph_match = re.search(r"@paragraph:(\d+)", target.locator)
             if not paragraph_match:
@@ -228,7 +289,7 @@ def _annotation_config(trace: GradeTrace, *, table_index: int = 1) -> dict[str, 
                 "type": "paragraph_index",
                 "index": int(paragraph_match.group(1)) - 1,
             }
-            annotation_text = f"图片证据批注：{decision.reason}"
+            annotation_text = f"{citations} 图片证据批注：{decision.reason}"
         else:
             if "：" in target.excerpt[:24]:
                 keyword = target.excerpt.split("：", 1)[0].strip() + "："
@@ -237,9 +298,16 @@ def _annotation_config(trace: GradeTrace, *, table_index: int = 1) -> dict[str, 
             if len(keyword) < 4:
                 continue
             annotation_target = {"type": "keyword", "keyword": keyword}
-            annotation_text = decision.reason
+            annotation_text = f"{citations} {decision.reason}"
         annotations.append(
             {
+                "comment_id": f"C-{len(annotations) + 1:03d}",
+                "criterion_id": decision.criterion_id,
+                "criterion_name": decision.criterion_name,
+                "evidence_id": target.evidence_id,
+                "evidence_ids": list(decision.evidence_ids),
+                "reference_numbers": reference_numbers,
+                "location_label": _evidence_location_label(target),
                 "text": annotation_text,
                 "target": annotation_target,
                 "evidence_kind": "image" if image_target else "text",
@@ -281,7 +349,36 @@ def _annotation_config(trace: GradeTrace, *, table_index: int = 1) -> dict[str, 
         "comment": "；".join(comment_parts)[:1000],
         "author": "LabTrace 演示教师",
         "table_index": table_index,
+        "evidence_appendix": appendix,
     }
+
+
+def _word_comment_threads(trace: GradeTrace) -> list[dict[str, Any]]:
+    status = (
+        "teacher_confirmed"
+        if trace.review.status in {"approved", "adjusted"}
+        else "pending_review"
+    )
+    return [
+        {
+            key: value
+            for key, value in annotation.items()
+            if key
+            in {
+                "comment_id",
+                "criterion_id",
+                "criterion_name",
+                "evidence_id",
+                "evidence_ids",
+                "reference_numbers",
+                "location_label",
+                "text",
+                "evidence_kind",
+            }
+        }
+        | {"status": status}
+        for annotation in _annotation_config(trace).get("annotations", [])
+    ]
 
 
 def _try_build_annotated_report(
@@ -322,6 +419,8 @@ def _word_workflow_summary(
         "images_analyzed": int(agent_run.get("images_sent", 0) or 0),
         "native_comments": int(details.get("annotations_count", 0) or 0),
         "image_comments": int(details.get("image_annotations_count", 0) or 0),
+        "evidence_references": len(trace.evidence),
+        "evidence_appendix_written": bool(details.get("evidence_appendix_appended")),
         "teacher_feedback_written": bool(
             trace.review.status in {"approved", "adjusted"}
             and details.get("comment_injected")
@@ -523,6 +622,8 @@ async def grade_demo_report(
         )
     now = time.time()
     trace = outcome.trace
+    evidence_appendix = _build_evidence_appendix(trace)
+    word_comments = _word_comment_threads(trace)
 
     output_path = task_dir / f"{input_path.stem}_批改演示.docx"
     delivery = _try_build_annotated_report(input_path, output_path, trace)
@@ -560,6 +661,8 @@ async def grade_demo_report(
         "privacy": outcome.privacy,
         "trace": trace_payload(trace),
         "suggested_trace": trace_payload(trace),
+        "evidence_appendix": evidence_appendix,
+        "word_comments": word_comments,
         "learning_feedback": build_learning_feedback(trace),
         "delivery": delivery,
         "word_workflow": word_workflow,
@@ -601,7 +704,8 @@ async def grade_demo_report(
                 "stage": "delivery",
                 "message": (
                     f"已生成可编辑 Word：{word_workflow['native_comments']} 条原生批注，"
-                    f"其中 {word_workflow['image_comments']} 条定位到图片证据。"
+                    f"其中 {word_workflow['image_comments']} 条定位到图片证据；"
+                    f"附录收录 {word_workflow['evidence_references']} 条 [n] 引用。"
                 ),
             },
         ],
@@ -670,6 +774,8 @@ async def review_demo_result(request: ReviewRequest):
     reviewed_trace.validate()
     state["status"] = "completed"
     state["trace"] = trace_payload(reviewed_trace)
+    state["evidence_appendix"] = _build_evidence_appendix(reviewed_trace)
+    state["word_comments"] = _word_comment_threads(reviewed_trace)
     state["learning_feedback"] = build_learning_feedback(reviewed_trace)
     state["events"].append(
         {"stage": "review", "message": f"教师已确认，最终得分 {final_score:g}。"}
@@ -734,8 +840,24 @@ async def download_demo_artifact(task_id: str, kind: str = "report"):
     state = _load_task(task_id)
     if kind == "trace":
         path = _task_path(task_id) / "trace.json"
-        _write_json(path, state["trace"])
+        _write_json(
+            path,
+            {
+                **state["trace"],
+                "evidence_appendix": state.get("evidence_appendix", []),
+                "word_comments": state.get("word_comments", []),
+            },
+        )
         return FileResponse(path, filename=f"{task_id}_evidence_trace.json")
+    if kind == "source":
+        path = Path(state.get("input_path") or "")
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="当前任务没有可预览的原始文档")
+        return FileResponse(path, filename=f"原始_{path.name}")
+    if kind != "report":
+        raise HTTPException(
+            status_code=400, detail="下载类型必须是 source、report 或 trace"
+        )
     path = Path(state.get("output_path") or "")
     if not path.exists():
         raise HTTPException(status_code=404, detail="当前任务没有可下载的批改文档")

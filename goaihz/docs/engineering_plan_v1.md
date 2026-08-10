@@ -131,7 +131,7 @@ flowchart TB
 | `POST /labtrace-api/grade` | 上传单份报告并同步生成评分建议 | 已实现 |
 | `GET /labtrace-api/tasks/{task_id}` | 读取任务状态 | 已实现 |
 | `POST /labtrace-api/review` | 教师逐项确认/调整并发布 | 已实现 |
-| `GET /labtrace-api/tasks/{task_id}/download?kind=report|trace` | 下载批注报告或证据链 | 已实现 |
+| `GET /labtrace-api/tasks/{task_id}/download?kind=source|report|trace` | 下载原始 Word、批注 Word 或含引用附录的证据链 | 已实现 |
 | `GET /labtrace-api/sample/{kind}` | 获取合成输入或批改示例 | 已实现 |
 | `DELETE /labtrace-api/tasks/{task_id}` | 立即删除上传和衍生文件 | 已实现 |
 | `POST /labtrace-api/rubrics/validate` | 校验教师课程 rubric | 已实现 |

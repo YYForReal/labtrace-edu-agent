@@ -215,7 +215,8 @@ def _image_evidence(parsed: dict[str, Any]) -> tuple[str, str] | None:
     if not images:
         return None
     target = images[0]
-    index = int(target.get("index", 1))
+    # Parser indices are zero-based; locators are teacher-facing and one-based.
+    index = int(target.get("index", 0)) + 1
     context = target.get("context") or target.get("description") or "报告内嵌结果图"
     return f"image:{index}", _excerpt(str(context))
 
@@ -232,12 +233,23 @@ def build_demo_trace(
     evidence: list[EvidenceRef] = []
     decisions: list[CriterionDecision] = []
     evidence_counter = 1
+    evidence_by_locator: dict[tuple[str, str], str] = {}
     profile_overrides = PROFILE_OVERRIDES.get(_detect_profile(parsed), {})
 
     def add_evidence(kind: str, locator: str, text: str, reliability: float) -> str:
         nonlocal evidence_counter
-        evidence_id = f"ev-{evidence_counter:03d}"
+        evidence_key = (kind, locator)
+        if evidence_key in evidence_by_locator:
+            return evidence_by_locator[evidence_key]
+
+        prefix = {"paragraph": "p", "table": "t", "chart": "i"}.get(kind, "ev")
+        try:
+            source_index = int(locator.rsplit(":", 1)[-1])
+        except (TypeError, ValueError):
+            source_index = evidence_counter
+        evidence_id = f"{prefix}-{source_index:04d}"
         evidence_counter += 1
+        evidence_by_locator[evidence_key] = evidence_id
         evidence.append(
             EvidenceRef(
                 evidence_id=evidence_id,
